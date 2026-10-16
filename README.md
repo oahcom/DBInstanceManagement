@@ -141,6 +141,9 @@ socket 验证可达分支，而不是只测失败路径），以及匿名访问�
 .venv/bin/python manage.py test inventory
 ```
 
+各要求的实际运行验证过程与结果见 [VERIFICATION.md](VERIFICATION.md)，其中也如实列出了
+未覆盖项（真实 crontab 墙上时钟到点触发、密码真实下发到数据库）。
+
 ---
 
 ## 附：原始笔试题
