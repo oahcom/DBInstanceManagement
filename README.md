@@ -59,24 +59,33 @@ docker run -d --name dbi-redis -p 6379:6379 redis:7-alpine
 
 ## 接口
 
-统一前缀 `/api/`，均为 DRF 分页列表 + 详情，支持标准的 GET/POST/PUT/PATCH/DELETE。
+统一前缀 `/api/`。**所有接口需要认证**（管理实例凭据属于运维后台场景）：先
+`manage.py createsuperuser`，再用 Session 登录 `/admin/` 后调用，或直接用 Basic Auth。
+
+```bash
+curl -u ops:你的密码 http://127.0.0.1:8000/api/instances/
+```
 
 | 路径 | 说明 |
 |------|------|
 | `/api/departments/` | 部门增删改查 |
 | `/api/clusters/` | 集群增删改查 |
 | `/api/instances/` | 实例增删改查 |
-| `/api/credentials/` | 凭据查询与管理 |
+| `/api/credentials/` | 凭据查询（**只读**，密码只由服务端生成） |
 | `/api/daily-stats/?date=YYYY-MM-DD` | 日统计查询（只读） |
+
+凭据接口刻意只读：密码由服务端生成，允许客户端写入就能 POST 出
+`password_encrypted=''` 的空密码凭据，让实例处于"有账号但登不上"的状态。
 
 两个自定义动作：
 
 ```bash
 # 探测实例 TCP 端口可达性。可达 200，不可达 503（探测结果是运维信号，用状态码区分）
-curl http://127.0.0.1:8000/api/instances/1/probe/
+# 连接超时 3 秒，不可达的实例不会挂住请求线程
+curl -u ops:你的密码 http://127.0.0.1:8000/api/instances/1/probe/
 
 # 立即轮换密码，响应中的明文只出现这一次
-curl -X POST http://127.0.0.1:8000/api/instances/1/rotate-password/
+curl -u ops:你的密码 -X POST http://127.0.0.1:8000/api/instances/1/rotate-password/
 ```
 
 密码默认不回显明文。列表接口返回掩码 `********`，需要明文时显式加 `?reveal=1`，
@@ -87,7 +96,9 @@ curl http://127.0.0.1:8000/api/credentials/            # password: "********"
 curl "http://127.0.0.1:8000/api/credentials/?reveal=1" # 明文
 ```
 
-每个响应都带 `X-Request-Duration-Ms` 头，耗时同时写入 `inventory.request` 日志。
+每个响应都带 `X-Request-Duration-Ms` 头，耗时同时写入 `inventory.request` 日志。计时中间件
+放在 `MIDDLEWARE` 最外层：内层任一中间件短路（`APPEND_SLASH` 的 301、`SecurityMiddleware`
+的跳转）都会让更靠后的中间件拿不到这次请求，放外层才真的覆盖"每个请求"。
 
 ## 密码轮换
 
@@ -111,11 +122,20 @@ curl "http://127.0.0.1:8000/api/credentials/?reveal=1" # 明文
 .venv/bin/python manage.py shell -c "from inventory.tasks import collect_daily_stats; collect_daily_stats.delay('2026-10-15')"
 ```
 
+## 安全说明
+
+- **接口需认证**。DRF 默认 `AllowAny`，会让任何人匿名拉到实例清单，甚至用 `?reveal=1`
+  取到明文密码。已改为 `IsAuthenticated` + Session/Basic 认证。
+- **密码默认不回显**，需要明文时显式 `?reveal=1`，且该接口同样需要认证。
+- **凭据接口只读**，杜绝客户端写入空密码。
+- 主密钥未设 `DBI_MASTER_KEY` 时回退到 `SECRET_KEY` 派生值，仅为本地开箱方便；
+  **生产必须注入**独立随机密钥。
+
 ## 测试
 
-21 个测试覆盖题目全部 5 个考点，包括加密往返、轮换后新旧明文不同、未到期实例跳过轮换、
-重复统计不产生重复行、中间件耗时头、以及可达/不可达两种探测结果（用真实 `listen()`
-的 socket 验证可达分支，而不是只测失败路径）。
+25 个测试覆盖题目全部 5 个考点，包括加密往返、轮换后新旧明文不同、未到期实例跳过轮换、
+重复统计不产生重复行、中间件耗时头、区分可达/不可达的探测结果（用真实 `listen()` 的
+socket 验证可达分支，而不是只测失败路径），以及匿名访问被拒、凭据不可写入。
 
 ```bash
 .venv/bin/python manage.py test inventory

@@ -84,7 +84,14 @@ class DBInstanceViewSet(viewsets.ModelViewSet):
         )
 
 
-class CredentialViewSet(viewsets.ModelViewSet):
+class CredentialViewSet(viewsets.ReadOnlyModelViewSet):
+    """只读。
+
+    密码一律由服务端生成，客户端不能写入——否则可以 POST 出 password_encrypted=''
+    的空密码凭据，让实例处于"有账号但登不上"的状态。轮换走
+    POST /api/instances/{id}/rotate-password/。
+    """
+
     queryset = Credential.objects.select_related("instance").order_by("instance__name")
     serializer_class = CredentialSerializer
 

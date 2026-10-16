@@ -47,6 +47,9 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    # 放最外层：内层任一中间件短路（APPEND_SLASH 的 301、SecurityMiddleware 的跳转）
+    # 都会让更靠后的中间件拿不到这次请求，计时就会漏掉它们。外层包住整条链才真的是"每个请求"。
+    "inventory.middleware.RequestTimingMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -54,7 +57,6 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
-    "inventory.middleware.RequestTimingMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"
@@ -139,6 +141,13 @@ MAILERS = {
 REST_FRAMEWORK = {
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 20,
+    "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
+    # 管理数据库实例凭据属于运维后台场景，走 Session 认证，浏览器登录 /admin/ 后即可调接口。
+    # 默认的 AllowAny 会让任何人匿名拉到实例清单和明文密码。
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "rest_framework.authentication.SessionAuthentication",
+        "rest_framework.authentication.BasicAuthentication",
+    ],
 }
 
 

@@ -5,6 +5,7 @@
 
 from datetime import timedelta
 
+from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
@@ -17,10 +18,29 @@ from .tasks import collect_daily_stats, rotate_instance_passwords
 class APITestCase(TestCase):
     def setUp(self):
         self.client = APIClient()
+        self.user = get_user_model().objects.create_user("ops", password="ops-secret-2026")
+        self.client.force_authenticate(self.user)
         self.department = Department.objects.create(name="基础架构部", code="INFRA")
         self.cluster = Cluster.objects.create(
             name="订单库主集群", engine=Cluster.Engine.MYSQL, department=self.department
         )
+
+
+class AuthTests(APITestCase):
+    def test_anonymous_cannot_list_instances(self):
+        self.client.force_authenticate(None)
+        response = self.client.get("/api/instances/")
+        self.assertIn(response.status_code, (401, 403))
+
+    def test_anonymous_cannot_reveal_passwords(self):
+        Credential.for_instance(
+            DBInstance.objects.create(
+                name="order-db-auth", cluster=self.cluster, host="10.0.0.9", port=3306
+            )
+        )
+        self.client.force_authenticate(None)
+        response = self.client.get("/api/credentials/?reveal=1")
+        self.assertIn(response.status_code, (401, 403))
 
 
 class DepartmentCRUDTests(APITestCase):
@@ -153,6 +173,25 @@ class CredentialRotationTests(APITestCase):
         revealed = self.client.get("/api/credentials/?reveal=1").json()["results"][0]["password"]
         self.assertNotEqual(revealed, "********")
         self.assertGreaterEqual(len(revealed), 24)
+
+    def test_credential_cannot_be_created_via_api(self):
+        """密码只能由服务端生成，否则可以 POST 出空密码凭据。"""
+        response = self.client.post(
+            "/api/credentials/", {"instance": self.instance.id, "username": "hacked"}, format="json"
+        )
+        self.assertEqual(response.status_code, 405)
+        self.assertFalse(Credential.objects.filter(username="hacked").exists())
+
+    def test_credential_cannot_be_deleted_or_edited(self):
+        Credential.for_instance(self.instance)
+        credential = Credential.objects.get(instance=self.instance)
+        self.assertEqual(self.client.delete(f"/api/credentials/{credential.id}/").status_code, 405)
+        self.assertEqual(
+            self.client.patch(
+                f"/api/credentials/{credential.id}/", {"username": "x"}, format="json"
+            ).status_code,
+            405,
+        )
 
     def test_rotate_password_endpoint_returns_one_time_plaintext(self):
         response = self.client.post(f"/api/instances/{self.instance.id}/rotate-password/")

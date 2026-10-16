@@ -67,7 +67,6 @@ class CredentialSerializer(serializers.ModelSerializer):
             "rotated_at",
             "updated_at",
         )
-        read_only_fields = ("rotated_at", "password")
 
     def get_password(self, obj: Credential) -> str:
         """默认返回掩码；带 ?reveal=1 才回明文，避免密码随列表接口被批量拖走。"""
